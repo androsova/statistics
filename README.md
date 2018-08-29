@@ -16,4 +16,9 @@ For this assignment, you will need to imagine that you are a statistical consult
 
 Your employers are savvy and have been successfully investing in real estate for a long time but they hope a more model-based approach will help focus their search, improving efficiency and the bottom line. The firm plans to use a combination of your model and industry professional expertise to make its investment decisions. Because of this, the firm is not willing to accept a black box solution - they have specified that they must be able to understand the details of your model, including its strengths and its weaknesses. None of the current employees at the firm have any experience or expertise in statistics, statistical inference or modeling - for example you should not assume they will know what a p-value or a linear regression is. As such you will need to explain all of your approaches in layman's terms throughout this project.
 
+### Exploratory data analysis of Behavioral Risk Factor Surveillance System
 
+This project (https://htmlpreview.github.io/?https://github.com/androsova/statistics/blob/master/intro_data_prob_project.html) looks into three questions: 
+- Is the number of sleeping hours correlated with poor mental or physical health?
+- In which US state(s) people have on average high body mass index (BMI) and drink large number of sugar-sweetened drinks?
+- Is the alcohol drinking habit is correlated with gender?
