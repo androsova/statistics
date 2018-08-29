@@ -22,3 +22,7 @@ This project (https://htmlpreview.github.io/?https://github.com/androsova/statis
 - Is the number of sleeping hours correlated with poor mental or physical health?
 - In which US state(s) people have on average high body mass index (BMI) and drink large number of sugar-sweetened drinks?
 - Is the alcohol drinking habit is correlated with gender?
+
+### Statistical inference from General Social Survey
+
+This project (https://htmlpreview.github.io/?https://github.com/androsova/statistics/blob/master/stat_inf_project.html) looks into a relationship between abortion decision and religion belief (Protestant, Catholic, Jewish, etc.).
