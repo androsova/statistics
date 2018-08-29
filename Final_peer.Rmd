@@ -1,0 +1,594 @@
+---
+title: "Peer Assessment II"
+output:
+  html_document
+---
+
+# Background
+
+As a statistical consultant working for a real estate investment firm, your task is to develop a model to predict the selling price of a given home in Ames, Iowa. Your employer hopes to use this information to help assess whether the asking price of a house is higher or lower than the true value of the house. If the home is undervalued, it may be a good investment for the firm.
+
+# Training Data and relevant packages
+
+In order to better assess the quality of the model you will produce, the data have been randomly divided into three separate pieces: a training data set, a testing data set, and a validation data set. For now we will load the training data set, the others will be loaded and used later.
+
+```{r load, message = FALSE}
+load("ames_train.Rdata")
+```
+
+Use the code block below to load any necessary packages
+
+```{r packages, message = FALSE}
+library(statsr)
+library(MASS)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(BAS)
+library(gridExtra)
+library(RColorBrewer)
+library(GGally)
+```
+
+## Part 1 - Exploratory Data Analysis (EDA)
+
+When you first get your data, it's very tempting to immediately begin fitting models and assessing how they perform.  However, before you begin modeling, it's absolutely essential to explore the structure of the data and the relationships between the variables in the data set.
+
+Do a detailed EDA of the ames_train data set, to learn about the structure of the data and the relationships between the variables in the data set (refer to Introduction to Probability and Data, Week 2, for a reminder about EDA if needed). Your EDA should involve creating and reviewing many plots/graphs and considering the patterns and relationships you see. 
+
+After you have explored completely, submit the three graphs/plots that you found most informative during your EDA process, and briefly explain what you learned from each (why you found each informative).
+
+* * *
+
+```{r creategraphs1, fig.width=10, fig.height=8}
+par(mfrow=c(3,4))
+colors = brewer.pal(6,"Set1")
+variables = c("area", "price", "Lot.Frontage", "Lot.Area", "Total.Bsmt.SF", "Garage.Area")
+for (x in 1:length(variables)){
+  variable = variables[x]
+  if (is.numeric(unlist(ames_train[,variable]))){
+    hist(unlist(ames_train[,variable]), main = variable, col = colors[x], xlab = "")
+    abline(v = median(unlist(ames_train[,variable]), na.rm = TRUE), col = "blue", lwd = 2)
+    hist(log(unlist(ames_train[,variable])), main = paste(variable, "log-transformed"), col = colors[x], xlab = "")
+  }
+}
+```
+
+I have checked all variables available in the training dataset. Among them, several variables (**area**, **price**, **Lot.Frontage**, **Lot.Area**, **Total.Bsmt.SF**, **Garage.Area**) might be important for model creation. However they have a non-symmetrical, right-skewed distribution. This motivated me for the log-transformation of this variables. On the figure above, you can see initial and log-transformed distribution of each variable. The blue vertical line indicates the median.
+
+The original **price histogram** (third plot in the first row) gives several important metrics:
+
+- There are more cheaper houses then expensive ones (right-skewed distribution)
+
+- The price distribution is unimodal with a median price of `r round(mean(unlist(ames_train[,"price"]), na.rm = TRUE),1)`$ indicated by the blue line
+
+```{r creategraphs2, fig.width=6, fig.height=4, fig.align='center'}
+par(mar=c(6.5,4.2,2.3,1))  
+colSums(is.na(ames_train)) %>% 
+  sort(., decreasing = TRUE) %>% .[1:10] %>% 
+  barplot(., col = rainbow(20), main='Top 10 variables with missing values', ylab = "Number of missing values", las=2, ylim = c(0,1000))
+```
+
+This plot gives us an indication of less informative variables in the dataset. **Pool Quality**, **Miscellaneous feature**, **Alley** and **Fence** consist of more than 50% of missing values. 
+
+It makes sense that there are so many missing values for these variables, as: 
+
+- only `r length(which(!is.na(ames_train$Pool.QC)))/nrow(ames_train)*100`% of houses have a pool, 
+
+- `r length(which(!is.na(ames_train$Misc.Feature)))/nrow(ames_train)*100`% of houses have a miscellaneous feature (such as elevator, 2nd garage, shed, tennis court), 
+
+- `r length(which(!is.na(ames_train$Alley)))/nrow(ames_train)*100`% of houses have access to alley,
+
+- `r length(which(!is.na(ames_train$Fence)))/nrow(ames_train)*100`% of houses have a fence.
+
+```{r creategraphs3, fig.width=10}
+ordered_neighb = ames_train %>% 
+  group_by(Neighborhood) %>% 
+  summarise(Median_price = median(price)) %>% 
+  arrange(desc(Median_price))
+ames_train_modified = ames_train %>% 
+  mutate(Neighborhood = factor(Neighborhood, levels = ordered_neighb %>% .$Neighborhood %>% as.character()))
+ggplot(ames_train_modified, aes(x = Neighborhood, y = price, fill=factor(Neighborhood)))+ 
+  geom_boxplot()+
+  labs(y = "Price ($)", title = "Neighborhoods ordered by median price", x = "")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0))+ 
+  scale_y_continuous(labels = scales::comma)+ 
+  guides(fill=guide_legend(title="Neighborhood"))
+```
+
+On the plot above, I have ordered neighborhoods by their median price. This visualization gives me several metrics:
+
+- the most expensive neighborhood is **Stone Brook** (median price is 340691.5)
+
+- the least expensive neighborhood is **Meadow Village** (median price is 85750.0)
+
+- the most heterogeneous neighborhood is **Stone Brook** with price standard deviation of 123459.10
+
+- the least heterogeneous neighborhood is **Blueste** with price standard deviation of 10381.23
+
+* * *
+
+## Part 2 - Development and assessment of an initial model, following a semi-guided process of analysis
+
+### Section 2.1 An Initial Model
+In building a model, it is often useful to start by creating a simple, intuitive initial model based on the results of the exploratory data analysis. (Note: The goal at this stage is **not** to identify the "best" possible model but rather to choose a reasonable and understandable starting point. Later you will expand and revise this model to create your final model.
+
+Based on your EDA, select *at most* 10 predictor variables from “ames_train” and create a linear model for `price` (or a transformed version of price) using those variables. Provide the *R code* and the *summary output table* for your model, a *brief justification* for the variables you have chosen, and a *brief discussion* of the model results in context (focused on the variables that appear to be important predictors and how they relate to sales price).
+
+* * *
+
+```{r fit_model}
+#Log-transform selected variables
+ames_train = ames_train %>% 
+  mutate(log_price = log(price), 
+         log_area = log(area),
+         log_Total.Bsmt.SF = log(Total.Bsmt.SF + 1),
+         log_Garage.Area = log(Garage.Area + 1))
+initial_model <- lm(log_price ~ log_area + log_Total.Bsmt.SF + log_Garage.Area + Overall.Qual + Overall.Cond + Year.Built + Sale.Condition, data=ames_train)
+summary(initial_model)
+```
+
+```{r, echo=FALSE}
+data.frame(Feature = c("**log(area)**", 
+                       "**log(Total.Bsmt.SF)**", 
+                       "**log(Garage.Area)**", 
+                       "**Overall.Qual**", 
+                       "**Overall.Cond**",
+                       "**Year.Built**",
+                       "**Sale.Condition**"),
+           Description = c("Log-transformed total area", 
+                           "Log-transformed total basement area",
+                           "Log-transformed size of garage",
+                           "Rates the overall material and finish of the house", 
+                           "Rates the overall condition of the house",
+                           "Original construction date",
+                           "Condition of sale"),
+           `Selection Reason` = c("As area, Lot.Frontage and Lot.Area are collinear variables, we select the total area because it is generic measurement, and has a unimodal normal distribution upon log-transformation", 
+                                  "Basement area is a complementary variable to the total area, however it might add a layer of information potentially influencing price",
+                                  "Size of garage is a complementary variable to the total area, but it might have a positive correlation with the house price",
+                                  "Price might be directly related to the overal house construction quality",
+                                  "Price might be directly related to the overal house condition",
+                                  "Construction date may reflect a type/fasion of constructed house, real-estate market state, demand and proposition ratio, etc.",
+                                  "Condition of sale may describe if the houses are over- or under-priced in specific situation such as sale between family members or adjoining land purchase")) %>% 
+  kable()
+```
+
+The overall model perfomance with selected variables has adjusted R-squared of 0.84. All selected variables have a statistically significant (p-value < 0.05) relationship to the log-transformed price. 
+
+- **log_area** has a positive estimate of 0.5 with statistically significant relationship to log-transformed price (p-value < 2e-16), 
+
+- **log_Total.Bsmt.SF** has a positive coefficient of 0.04 with statistically significant relationship to log-transformed price (p-value < 2.8e-12),  
+
+- **log_Garage.Area** has a positive coefficient of 0.02 with statistically significant relationship to log-transformed price (p-value < 4.4e-07), 
+
+- **Overall.Qual** has a positive coefficient of 0.1 with statistically significant relationship to log-transformed price (p-value < 2e-16), 
+
+- **Overall.Cond** has a positive coefficient of 0.06 with statistically significant relationship to log-transformed price (p-value < 2e-16), 
+
+- **Year.Built** has a positive coefficient of 0.004 with statistically significant relationship to log-transformed price (p-value < 2e-16), 
+
+- **Sale.Condition** in case of Allocation has a positive coefficient of 0.2 (p-value < 0.033), in case of Normal Sale has a positive coefficient of 0.096 (p-value = 3e-05) and in case of Partial (home was not completed) has a positive coefficient of 0.17 (p-value = 4e-08).
+
+As expected, in case of house sale between family members the price is lower compared to the normal conditions (estimate = -0.06), however high p-value indicates that there is no statistical evidence of relationship between this sale condition and log(price).
+
+* * *
+
+### Section 2.2 Model Selection
+
+Now either using `BAS` another stepwise selection procedure choose the "best" model you can, using your initial model as your starting point. Try at least two different model selection methods and compare their results. Do they both arrive at the same model or do they disagree? What do you think this means?
+
+* * *
+
+In this section I will compare **two model selection methods: Bayesian Model Averaging and stepwise AIC.**
+
+First, I run Bayesian Model Averaging model selection based on Markov Chain Monte Carlo (MCMC) method. This method is able to cope with a large number of model combinations. It randomly samples from a probability distribution based on constructing a Markov chain that has the desired distribution as its equilibrium distribution.
+
+Zellner-Siow Cauchy distribution was used for he prior probabilities for the regression coefficients; and uniform distribution was used for the prior probabilities for all models.
+
+We chose Zellner-Siow Cauchy prior as it prevents BMA from disproportionately favoring the null model as a result of the Bartlett-Lindley paradox and it also allows for uncertainty in the prior variance parameter g.
+
+```{r model_select, message = FALSE, warning=FALSE, fig.height=5, fig.width=7, fig.align='center'}
+basLM = ames_train %>% 
+  dplyr::select(log_price, log_area, log_Total.Bsmt.SF, log_Garage.Area, Overall.Qual, Overall.Cond, Year.Built, Sale.Condition) %>% 
+  bas.lm(log_price ~ ., data=., method='MCMC',
+                 prior='ZS-null', modelprior=uniform())
+image(basLM, top.models = 5, rotate=FALSE)
+```
+
+BMA model with highest posterior probability (`r summary(basLM)["PostProbs","model 1"]`) includes all variables except subcategories **AdjLand** (Adjoining Land Purchase), **Alloca** (Allocation) and **Family** (Sale between family members) of the sale condition.
+
+```{r}
+model.AIC <- stepAIC(initial_model, k = 2)
+```
+
+Stepwise model selection by AIC criteria keeps all initial variables. This indicates that original model had the lowest AIC score among other combination of selected variables.
+
+The two methods agree on the overall variable inclusion, however BMA indicated that several subcategories of **Sale.Condition** are not informative in the initial model.
+
+* * *
+
+### Section 2.3 Initial Model Residuals
+One way to assess the performance of a model is to examine the model's residuals. In the space below, create a residual plot for your preferred model from above and use it to assess whether your model appears to fit the data well. Comment on any interesting structure in the residual plot (trend, outliers, etc.) and briefly discuss potential implications it may have for your model and inference / prediction you might produce.
+
+* * *
+
+I am interested in the Bayesian Model Averaging model described above, as it gives a detailed insight for the model varaible selection.
+
+```{r model_resid, message = FALSE, warning=FALSE, fig.width=10, fig.height=4}
+par(mfrow=c(1,3))
+plot(basLM, which=c(1, 2), ask=FALSE)
+plot(basLM, which=4, ask=FALSE, cex.lab=0.5)
+```
+
+From diagnostic charts of the regression fitting, we can see that redidual plot has an interesting structure: there is no random scatter between the residuals and fitted values; it has rather a curved pattern instead of the plane line and indicates three potential outlier observations (310, 428 and 740).
+
+The second graph with Model Probabilities represents unique models discovered for the current set of variables. Models in the top-right have the highest cumulative probabilities (~1).
+
+The Inclusion Probabilities graph represents the importance of the different factors by the marginal posterior inclusion probability (height of bars). This plot indicates that all variables except three subcategories of sale condition (**AdjLand**, **Alloca** and **Family**) are important for predicting natural log of the home prices.
+
+* * *
+
+### Section 2.4 Initial Model RMSE
+
+You can calculate it directly based on the model output. Be specific about the units of your RMSE (depending on whether you transformed your response variable). The value you report will be more meaningful if it is in the original units (dollars).
+
+* * *
+
+**RMSE of BAS model**
+
+```{r model_rmse1}
+# Extract Predictions
+predict.bas <- exp(predict(basLM)$Ybma)
+
+# Extract Residuals
+resid.bas <- ames_train %>% 
+  filter(!is.na(log_Total.Bsmt.SF) & !is.na(log_Garage.Area)) %>% 
+  .$price - predict.bas
+
+# Calculate RMSE
+rmse.bas <- sqrt(mean(resid.bas^2))
+paste(round(rmse.bas,2), "US Dollars")
+```
+
+**RMSE of stepwise AIC model**
+
+```{r model_rmse2}
+# Extract Predictions
+predict.AIC <- exp(predict(model.AIC))
+
+# Extract Residuals
+resid.AIC <- ames_train %>% 
+  filter(!is.na(log_Total.Bsmt.SF) & !is.na(log_Garage.Area)) %>% 
+  .$price - predict.AIC
+
+# Calculate RMSE
+rmse.AIC <- sqrt(mean(resid.AIC^2))
+paste(round(rmse.AIC,2), "US Dollars")
+```
+
+In general, the better the model fit, the lower the RMSE. Thus, comparing RMSE of two models, stepwise model selection by AIC has a better model fit (RMSE = 35896.39 US Dollars).
+
+* * *
+
+### Section 2.5 Overfitting 
+
+The process of building a model generally involves starting with an initial model (as you have done above), identifying its shortcomings, and adapting the model accordingly. This process may be repeated several times until the model fits the data reasonably well. However, the model may do well on training data but perform poorly out-of-sample (meaning, on a dataset other than the original training data) because the model is overly-tuned to specifically fit the training data. This is called “overfitting.” To determine whether overfitting is occurring on a model, compare the performance of a model on both in-sample and out-of-sample data sets. To look at performance of your initial model on out-of-sample data, you will use the data set `ames_test`.
+
+```{r loadtest, message = FALSE}
+load("ames_test.Rdata")
+```
+
+Use your model from above to generate predictions for the housing prices in the test data set.  Are the predictions significantly more accurate (compared to the actual sales prices) for the training data than the test data?  Why or why not? Briefly explain how you determined that (what steps or processes did you use)?
+
+* * *
+
+In this section, we will compare the model predictions on the out-of-sample data set.
+
+**RMSE of BAS model predicting test data**
+
+```{r initmodel_test1}
+#Create log-transformed variables in the test dataset
+ames_test = ames_test %>% 
+  mutate(log_price = log(price), 
+         log_area = log(area),
+         log_Total.Bsmt.SF = log(Total.Bsmt.SF + 1),
+         log_Garage.Area = log(Garage.Area + 1))
+
+# Extract Predictions
+predict.bas_test <- exp(predict(basLM, ames_test)$Ybma)
+
+# Extract Residuals
+resid.bas_test <- ames_test$price - predict.bas_test
+
+# Calculate RMSE
+rmse.bas_test <- sqrt(mean(resid.bas_test^2))
+paste(round(rmse.bas_test,2), "US Dollars")
+```
+
+**RMSE of stepwise AIC model predicting test data**
+
+```{r initmodel_test2}
+# Extract Predictions
+predict.AIC_test <- exp(predict(model.AIC, ames_test))
+
+# Extract Residuals
+resid.AIC_test <- ames_test$price - predict.AIC_test
+
+# Calculate RMSE
+rmse.AIC_test <- sqrt(mean(resid.AIC_test^2))
+paste(round(rmse.AIC_test,2), "US Dollars")
+```
+
+Stepwise AIC model has a higher accuracy then BMA model, because RMSE of stepwise AIC model is slightly lower (`r paste(round(rmse.AIC_test,2), "US Dollars")`) then RMSE of BMA model (`r paste(round(rmse.bas_test,2), "US Dollars")`) on the test dataset.
+
+As BMA model and stepwise AIC model were built to fit the training data, we expect the worse fit for the test dataset (higher RMSE). However, RMSE for the test set in both models is lower than one for the training set, which gives an indication that **current model has a high predictive value when tested out of sample without overfitting**. The higher RMSE for the training dataset can be explained by inclusion of the abnormal sale conditions or outliers.
+
+* * *
+
+
+
+## Part 3 Development of a Final Model
+
+Now that you have developed an initial model to use as a baseline, create a final model with *at most* 20 variables to predict housing prices in Ames, IA, selecting from the full array of variables in the dataset and using any of the tools that we introduced in this specialization.  
+
+Carefully document the process that you used to come up with your final model, so that you can answer the questions below.
+
+### Section 3.1 Final Model
+
+Provide the summary table for your model.
+
+* * *
+
+```{r model_playground}
+basLM_final = ames_train %>% 
+  filter(Sale.Condition == "Normal" & !(PID %in% c("531375070", "902207130", "908154205"))) %>% 
+  dplyr::select(log_price, log_area, log_Total.Bsmt.SF, log_Garage.Area, Overall.Qual, Overall.Cond, Kitchen.Qual, Year.Built, Fireplaces) %>% 
+  bas.lm(log_price ~ ., data=., method='MCMC',
+                 prior='ZS-null', modelprior=uniform())
+summary(basLM_final)
+```
+
+* * *
+
+### Section 3.2 Transformation
+
+Did you decide to transform any variables?  Why or why not? Explain in a few sentences.
+
+* * *
+
+Based on the results from "Part 2 - Development and assessment of an initial model", I decided to retain only normal conditions of sale, which allows to remove some of the unusual observations in the data. Upon this selection, I checked BMA model residuals and filtered out observations 610 (PID = 531375070), 428 (PID = 902207130) and 310 (PID = 908154205), which were outliers.
+
+```{r model_assess, fig.width=10, fig.height=6}
+par(mfrow=c(2,4))
+colors = brewer.pal(6,"Set1")
+variables = c("price", "area", "Total.Bsmt.SF", "Garage.Area")
+for (x in 1:length(variables)){
+  variable = variables[x]
+  if (is.numeric(unlist(ames_train[,variable]))){
+    hist(unlist(ames_train[,variable]), main = variable, col = colors[x], xlab = "", breaks = 40)
+    hist(log(unlist(ames_train[,variable])), main = paste(variable, "log-transformed"), col = colors[x], xlab = "", breaks = 40)
+  }
+}
+```
+
+I log-transformed several variables: **price**, **area**, **Total.Bsmt.SF** and **Garage.Area**. This decision was motivated by the right-skewed distribution of the original values (see figure below). Lot-transformation results in nearly normal distribution.
+
+* * *
+
+### Section 3.3 Variable Interaction
+
+Did you decide to include any variable interactions? Why or why not? Explain in a few sentences.
+
+* * *
+
+```{r model_inter, message=FALSE, warning=FALSE, fig.width=8, fig.height=7, fig.align='center'}
+ggpairs(ames_train %>% dplyr::select(log_area, log_Total.Bsmt.SF, log_Garage.Area, Overall.Qual, Overall.Cond, Kitchen.Qual, Year.Built, Fireplaces))
+```
+
+I checked linear relationship between selected variables to conclude if there is interaction between variables. There is low or no relationship between most pairs of variables, however several interactions stand out:
+
+- positive moderate correlation between log-transformed area and overall quality (Pearson correlation = 0.64)
+
+- positive moderate correlation between overall quality and year when house was built (Pearson correlation = 0.605)
+
+* * *
+
+### Section 3.4 Variable Selection
+
+What method did you use to select the variables you included? Why did you select the method you used? Explain in a few sentences.
+
+* * *
+
+While selecting variables for the model, I was interested to have a representative metrics for different aspects of the house: size, age, quality and presence of additional comfortable conditions such as garage or fireplace. To determine the best representative variable for the category, I checked their correlation with outcome variable (price) and with each other (to identify **collinearity**).
+
+Another important factor was to exclude variables with a great number of **missing values** (for details refer to the second plot in EDA section).
+
+Remaining varaibles were selected by maximizing the **AIC value** in step-forward model selection approach. This method allows to estimate the quality of each model relative to the other possible models by a trade-off between the goodness of fit and model complexity [1].
+
+```{r model_select2, fig.height=5, fig.width=7, fig.align='center'}
+image(basLM_final, top.models = 5, rotate=FALSE)
+```
+
+The final model has a higher posterior probability then the initial one. Final model includes all variables selected except the **Poor** subcategory of the kitchen quality.
+
+* * *
+
+### Section 3.5 Model Testing
+
+How did testing the model on out-of-sample data affect whether or how you changed your model? Explain in a few sentences.
+
+* * *
+
+Testing the model on out-of-sample data indicated that training dataset was highly heterogeneous and had worse model fit compared to the testing dataset. This lead to the conclusion that several outliers and specific sale conditions can't be fitted by the model (avoiding overfitting) and increase the RMSE. 
+
+Hereby, I retained only **Normal** sale condition and additionally excluded three outliers from the dataset. The only one category in the variable is not informative for the model, thus Sale.Condition was removed from the final model.
+
+* * *
+
+## Part 4 Final Model Assessment
+
+### Section 4.1 Final Model Residual
+
+For your final model, create and briefly interpret an informative plot of the residuals.
+
+* * *
+
+```{r, message = FALSE, warning=FALSE, fig.width=6, fig.height=4, fig.align='center'}
+plot(basLM_final, which=c(1), ask=FALSE)
+```
+
+From this diagnostic chart, we can see that there is random scatter present between the residuals and fitted values. It has a slightly curved pattern, which is close to the plane line.
+
+* * *
+
+### Section 4.2 Final Model RMSE
+
+For your final model, calculate and briefly comment on the RMSE.
+
+* * *
+
+```{r}
+# Extract Predictions
+predict.bas_train_final <- exp(predict(basLM_final)$Ybma)
+# Extract Residuals
+resid.bas_train_final <- ames_train %>% filter(Sale.Condition == "Normal" & !(PID %in% c("531375070", "902207130", "908154205"))) %>% .$price - predict.bas_train_final
+# Calculate RMSE
+rmse.bas_train_final <- sqrt(mean(resid.bas_train_final^2))
+
+# Extract Predictions
+predict.bas_test_final <- exp(predict(basLM_final, ames_test)$Ybma)
+# Extract Residuals
+resid.bas_test_final <- ames_test$price - predict.bas_test_final
+# Calculate RMSE
+rmse.bas_test_final <- sqrt(mean(resid.bas_test_final^2))
+```
+
+```{r, echo = FALSE}
+data.frame(Model = c("Initial", "Final"),
+           RMSE_on_train_data = c(paste(round(rmse.bas,2), "US Dollars"), paste(round(rmse.bas_train_final,2), "US Dollars")),
+           RMSE_on_test_data = c(paste(round(rmse.bas_test,2), "US Dollars"), paste(round(rmse.bas_test_final,2), "US Dollars"))) %>% 
+  kable()
+```
+
+Initial model had a higher RMSE for the training data compared to the testing data. Having removed the outliers and abnormal sale conditions, the final model has a lower RMSE on the training data compared to the testing data, which is expected as the model should have worse fit on the out-of-sample dataset.
+
+* * *
+
+### Section 4.3 Final Model Evaluation
+
+What are some strengths and weaknesses of your model?
+
+* * *
+
+**Strengths**
+
+The final BMA model has a high posterior probability, suggesting a high predictive power for the new dataset. The RMSE of the final model is lower that the initial one, which indicates a better fit of the model.
+
+**Weaknesses**
+
+Filtering out case-specific sale conditions results in a not generalizable subset to the whole population (all real-estate market). It rather takes a condition specific subset of population, thus lacking predictive power for cases of abnormal sales conditions.
+
+The model fit might benefit from inclusion of more variables, however at expense of results' interpretability.
+
+* * *
+
+### Section 4.4 Final Model Validation
+
+Testing your final model on a separate, validation data set is a great way to determine how your model will perform in real-life practice. 
+
+You will use the “ames_validation” dataset to do some additional assessment of your final model. Discuss your findings, be sure to mention:
+
+* What is the RMSE of your final model when applied to the validation data?  
+* How does this value compare to that of the training data and/or testing data?
+* What percentage of the 95% predictive confidence (or credible) intervals contain the true price of the house in the validation data set?  
+* From this result, does your final model properly reflect uncertainty?
+
+```{r loadvalidation, message = FALSE}
+load("ames_validation.Rdata")
+```
+
+* * *
+
+```{r model_validate}
+#Create log-transformed variables in the test dataset
+ames_validation = ames_validation %>% 
+  mutate(log_price = log(price), 
+         log_area = log(area),
+         log_Total.Bsmt.SF = log(Total.Bsmt.SF + 1),
+         log_Garage.Area = log(Garage.Area + 1))
+
+# Extract Predictions
+predict.bas_validation_final <- exp(predict(basLM_final, ames_validation)$Ybma)
+# Extract Residuals
+resid.bas_validation_final <- ames_validation$price - predict.bas_validation_final
+# Calculate RMSE
+rmse.bas_validation_final <- sqrt(mean(resid.bas_validation_final^2))
+```
+
+```{r, echo = FALSE}
+data.frame(Model = c("Final"),
+           RMSE_on_train_data = c(paste(round(rmse.bas_train_final,2), "US Dollars")),
+           RMSE_on_test_data = c(paste(round(rmse.bas_test_final,2), "US Dollars")),
+           RMSE_on_validation_data = c(paste(round(rmse.bas_validation_final,2), "US Dollars"))) %>% 
+  kable()
+```
+
+The RMSE of the final model for the validation data is suprisingly lower (`r paste(round(rmse.bas_validation_final,2), "US Dollars")`) than RMSE for the training data (`r paste(round(rmse.bas_train_final,2), "US Dollars")`). This indicates that model has a good fit for the validation dataset and predicted values are closer to the actual prices.
+
+```{r}
+ci_ames = exp(confint(predict(basLM_final, ames_validation, se.fit = TRUE), parm="pred"))
+length(which(ifelse(ames_validation$price > ci_ames[,"2.5%"] & ames_validation$price < ci_ames[,"97.5%"], "yes", "no") == "yes"))/nrow(ci_ames)*100
+```
+
+96.2% of the true price houses in the validation dataset lay within 95% predictive confidence interval. The table below gives 10 first rows with respective CIs (in US dollars), true price of the houses in the validation data (in US dollars) and if the value falls within 95% CI range.
+
+```{r}
+data.frame(`CI_2.5_percent` = ci_ames[,"2.5%"], `CI_97.5_percent` = ci_ames[,"97.5%"], Actual_value = ames_validation$price) %>% 
+  mutate(Within_CI_range = ifelse(Actual_value > ci_ames[,"2.5%"] & Actual_value < ci_ames[,"97.5%"], "yes", "no")) %>% 
+  slice(1:10) %>% 
+  kable()
+```
+
+Coverage probability in the final model is equal to 96.2%. This indicates that 96.2% of the time true value of the price lays within 95\% prediction interval, which **meets assumptions for the model uncertainty**.
+
+**Undervalued and overvalued houses**
+
+```{r}
+actual_vs_predicted_df = data.frame(House_PID = ames_validation$PID, Actual_price = ames_validation$price, Predicted_price = predict.bas_validation_final, `CI_2.5_percent` = ci_ames[,"2.5%"], `CI_97.5_percent` = ci_ames[,"97.5%"]) %>% 
+    mutate(Within_CI_range = ifelse(Actual_price > ci_ames[,"2.5%"] & Actual_price < ci_ames[,"97.5%"], "yes", "no"),
+           Price_comparison = ifelse(Actual_price > Predicted_price, "overvalued", "undervalued")) %>% 
+  filter(Within_CI_range == "no") %>% 
+  select(-Within_CI_range)
+```
+
+Undervalued house is determined as a house with an actual price below a predicted price and outside of 95% confidence interval of prediction. **Undervalued houses** are presented in the table below.
+
+`r actual_vs_predicted_df %>% filter(Price_comparison == "undervalued") %>% select(-Price_comparison) %>% kable()`
+
+Overvalued house is determined as a house with an actual price above a predicted price and outside of 95% confidence interval of prediction. **Overvalued houses** are presented in the table below.
+
+`r actual_vs_predicted_df %>% filter(Price_comparison == "overvalued") %>% select(-Price_comparison) %>% kable()`
+
+* * *
+
+## Part 5 Conclusion
+
+Provide a brief summary of your results, and a brief discussion of what you have learned about the data and your model. 
+
+* * *
+
+EDA analysis indicated that several variables (area, price, Lot.Frontage, Lot.Area, Total.Bsmt.SF, Garage.Area) should be log-transformed to obtain normal distribution.
+
+Pool Quality, Miscellaneous feature, Alley and Fence variables were excluded from the further analysis due to the high number of missing values.
+
+I compared two approaches for variable selection: Bayesian Model Averaging model selection based on Markov Chain Monte Carlo (MCMC) method and stepwise model selection by AIC criteria.
+
+The initial model included variables: log_area, log_Total.Bsmt.SF, log_Garage.Area, Overall.Qual, Overall.Cond, Year.Built, Sale.Condition. However RMSE of this model (`r paste(round(rmse.bas_test,2), "US Dollars")` US Dollars) indicated that several outliers and abnormal sale conditions affected the model fit. Removing those, improved the RMSE of the final model (`r paste(round(rmse.bas_validation_final,2), "US Dollars")`). 96.2% of the true price houses in the validation dataset lay within 95% predictive confidence interval of the final BMA model.
+
+In this, assignment, I learned that EDA analysis is crusial in varianle selection, thransformation and determination of relatinship with the outcome variable. Comparing several model selection methods, I learned that stepwise AIC model has a higher accuracy in terms of RMSE on the test dataset, however RMSE of BMA model is not far behind. The complete picture on the model preformance is composed of model summmary, residuals, RMSE and prediction values of the final model by two out-of-sample datasets.
+
+* * *
+
+**References**
+
+[1] Akaike, H. (1973), "Information theory and an extension of the maximum likelihood principle", in Petrov, B.N.; Csáki, F., 2nd International Symposium on Information Theory, Tsahkadsor, Armenia, USSR, September 2-8, 1971, Budapest: Akadémiai Kiadó, pp. 267–281.

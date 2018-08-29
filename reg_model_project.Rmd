@@ -1,0 +1,252 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(corrplot)
+library(knitr)
+library(gridExtra)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+* * *
+
+## Part 1: Data
+
+The dataset contains the information about different movie and their characteristics (such as genre, release date, rating on IMDB, actors in the movie, etc.) derived from Rotten Tomatoes and IMDB:
+
+www.rottentomatoes.com
+www.imdb.com
+
+Generalizability: As the observations in this dataset were randomly sampled from the above mentioned sources, we can say that it is a representative sample of US movies produced and released before 2016. The results from inference on this dataset can be generalizable to the target population.
+
+Causality: As the movies were randomly selected - not randomly assigned, we can't make the conclusions about causality between the observations.
+
+* * *
+
+## Part 2: Research question
+
+Is there any factor that has a statistically significant power to predict the IMDB rating of the US-produced movie (one has to be cautious with regards to collinear variables)?
+
+**Motivation:**
+
+Since we usually use the IMDB rating to judge the movie quality and effect on the audience, we are interested to know if there is any other criteria that can indicate the quality of the movie (or in our case, IMDB rating).
+
+**Variables for exploration:**
+
+-imdb_rating	(Rating on IMDB, ranges from 1 to 10)
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+First, we would like to check the normality condition to be met for IMDB rating.
+
+```{r}
+movies %>% 
+  ggplot(aes(x=imdb_rating)) + 
+      geom_bar(fill="orange") + 
+      xlab("IMDB rating") +
+      ylab("Frequency")
+```
+
+The histogram for IMDB rating appears to be slightly right skewed, indicating the tendency of the ratings to be higher than the mean (mean = 6.5) on average.
+
+The summary statistic of IMDB rating is as following:
+
+```{r}
+summary(movies$imdb_rating)
+sd(movies$imdb_rating)
+```
+
+IMDB rating has median equal to 6.6, mean equal to 6.49 and standard deviation equal to 1.085.
+
+As we would like to exclude collinear variables from the model, we will check these criteria with correlation plot. 
+
+```{r, warning=FALSE, fig.height=5.5, fig.width=5.5}
+numeric_movies = movies %>% 
+  mutate_each(funs(as.numeric)) %>% 
+  select(title_type:top200_box)
+
+numeric_movies %>% 
+  cor(use = "complete.obs") %>% 
+  corrplot(method="shade",
+        shade.col=NA,
+        cl.pos = "n",
+        tl.col="black",
+        tl.srt=45)
+```
+
+We notice several variables that have a hight Pearson correlation with ***imdb_rating***. These include ***critics_rating***, ***critics_score***, ***audience_rating*** and ***audience_score***. Here is the correlations values between these variables.
+
+```{r}
+numeric_movies %>% 
+  select(imdb_rating, critics_rating, critics_score, audience_rating, audience_score) %>% 
+  cor(use = "complete.obs") %>% 
+  round(2) %>% 
+  kable()
+```
+
+As these scores are directly related to the opinion of people (public or critics), we can consider them as human factor evaluation and thus considered to be collinear. Since we want to evaluate the model performance in terms of IMDB rating, we will exclude these variables from the dataset.
+
+```{r}
+numeric_movies = numeric_movies %>% 
+  select(-critics_rating, -critics_score, -audience_rating, -audience_score)
+```
+
+* * *
+
+## Part 4: Modeling
+
+For the full model we will consider following categorical and numeric variables in our dataset:
+
+Variable | Description
+----------- | ------------------------------------------
+title_type | Type of movie
+genre | Genre of movie
+runtime | Runtime of movie (in minutes)
+mpaa_rating | MPAA rating of the movie
+thtr_rel_year | Year the movie is released in theaters
+imdb_rating | Rating on IMDB
+best_pic_nom | Whether or not the movie was nominated for a best picture Oscar
+best_pic_win | Whether or not the movie won a best picture Oscar
+best_actor_win | Whether or not one of the main actors in the movie ever won an Oscar
+best_actress win | Whether or not one of the main actresses in the movie ever won an Oscar
+best_dir_win | Whether or not the director of the movie ever won an Oscar 
+top200_box | Whether or not the movie is in the Top 200 Box Office list on BoxOfficeMojo
+
+As mentioned earlier, we excluded ***critics_rating***, ***critics_score***, ***audience_rating*** and ***audience_score*** due to the collinearity criteria.
+
+We also excluded the non-categorical and non-numeric variables (such as movie title, studio, actor name, director), as these are not representative entries that can be modeled.
+
+###Model selection
+
+As we are interested in statistically significant predictors in the model, we choose the **backward stepwise selection based on p-value**. For this we will start with the full model and step-by-step eliminate the predictors that have the highest p-value.
+
+```{r}
+lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_year + best_pic_nom + best_pic_win + best_actor_win + best_actress_win + best_dir_win + top200_box, data = movies) %>% 
+  summary()
+```
+
+For the initial model adjusted R2  = 0.316. We have 13 statistically significant (p-value <0.05) predictors. Next, we eliminate the variable ***best_actress_win*** with p-value = 0.99.
+
+```{r}
+lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_year + best_pic_nom + best_pic_win + best_actor_win + best_dir_win + top200_box, data = movies) %>% 
+  summary()
+```
+
+For reduced model adjusted R2 = 0.317, which improved compared the to previous model. We have the same 13 statistically significant (p-value <0.05) predictors. 
+
+Next, we eliminate the variable ***best_pic_win*** with p-value = 0.89. After that we eliminate ***best_actor_win*** (p-value = 0.69) (CODE IS BELOW. THE OUTPUT IS NOT SHOWN TO REDUCE THE SPACE OF DOCUMENT). Upon this iteration the variable with highest p-value is ***genre*** (category Animation). But since one of the levels of this variable has a significant p-value (for example, Drama), would actually keep this variable in the model. Same applies to the variable ***mpaa_rating*** (category NC-17).
+
+The variable with next highest p-value (0.41) is ***thtr_rel_year***.
+
+```{r, eval=FALSE}
+lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_year + best_pic_nom + best_actor_win + best_dir_win + top200_box, data = movies) %>% 
+  summary()
+#remove best_actor_win (p-value = 0.69)
+
+lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + thtr_rel_year + best_pic_nom + best_dir_win + top200_box, data = movies) %>% 
+  summary()
+#remove thtr_rel_year (p-value = 0.41)
+```
+
+After this elimination, we check our model: 
+
+```{r}
+lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + best_pic_nom + best_dir_win + top200_box, data = movies) %>% 
+  summary()
+```
+
+For this model adjusted R2 = 0.319, which improved compared the to previous models. We have now 15 statistically significant (p-value <0.05) predictors. As mentioned earlier we can't exclude ***genre*** and ***mpaa_rating***, as this variables have at least one level with statistical significance.
+
+### Model diagnostics
+
+```{r, fig.width=10}
+model_features = fortify(lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + best_pic_nom + best_dir_win + top200_box, data = movies))
+
+p1 <- ggplot(model_features, aes(x=.fitted, y=.resid))+geom_point() +
+      geom_smooth(se=FALSE)+geom_hline(yintercept=0, col="red", linetype="dashed") +
+      xlab("Fitted Values")+ylab("Residuals") +
+      ggtitle("Residual vs Fitted Plot")
+
+model_features$.qqnorm <- qqnorm(model_features$.stdresid, plot.it=FALSE)$x  
+y <- quantile(model_features$.stdresid, c(0.25, 0.75))
+x <- quantile(model_features$.qqnorm, c(0.25, 0.75)) 
+
+# Compute the line slope
+slope <- diff(y) / diff(x)             
+# Compute the line intercept
+int <- y[1] - slope * x[1]             
+
+p2 <- ggplot(model_features, aes(.qqnorm, .stdresid)) +
+      geom_point(na.rm = TRUE) +
+      geom_abline(intercept=int, slope=slope, color="red") +
+      xlab("Theoretical Quantiles")+ylab("Standardized Residuals") +
+      ggtitle("Normal Q-Q Plot")
+
+p3 <- ggplot(data=model_features, aes(x=.resid)) + 
+      geom_histogram(binwidth=0.5, fill="blue") +
+      xlab("Residuals") +
+      ggtitle("Distribution of Residuals")
+
+grid.arrange(p1, p3, p2, nrow=1, top="Model Diagnostic Plots")
+```
+
+The model diagnostic plots indicate that the model partially satisfies the MLR conditions. The scatter of the residuals is randomly distributed around zero for the fitted values < 7. When fitted values are above 7, the scatter reduces. The residuals Q-Q plot and distribution histogram show a nearly normal distribution, however moderate left scatter is present in both histogram and Q-Q plot.
+
+### Model coefficients
+
+The ***genre*** variable is a mixture of several levels, among which "Art House & International", "Documentary", "Drama", "Musical & Performing Arts", "Mystery & Suspense" and "Other" show statistical significance. Important to note that category "Musical & Performing Arts" has the highest affect on the IMDB rating, since it's estimate is positive 0.95.
+
+***mpaa_rating*** is also a mixed level variable with "PG", "PG-13" and "R" showing statistical significance. This predictor has a negative effect on the IMDB rating, as it's estimates are negative (PG = -0.60, PG-13 = -0.83, R = -0.51).
+
+There is a positive effect on IMDB rating is the movie was nominated for best picture Oscar (best_pic_nomyes estimate = 0.87, p-value = 2.59e-05) and if runtime is longer (runtime estimate = 0.01, p-value = 6.89e-07).
+
+* * *
+
+## Part 5: Prediction
+
+I am interest to utilize the model for prediction of **Suicide Squad** Action movie released in 2016.
+If the model has a predictive power the IMDB rating predicted should be similar  to the read IMDB ranking.
+
+```{r}
+model = lm(imdb_rating ~ title_type + genre + runtime + mpaa_rating + best_pic_nom + best_dir_win + top200_box, data = movies)
+real_data = data.frame(title_type = "Feature Film", genre="Action & Adventure", runtime=123, mpaa_rating="PG-13", best_pic_nom = "no", best_dir_win="no", top200_box = "yes")
+predicted_rating = predict(model, real_data, interval="predict")
+
+df = data.frame(t="Suicide Squad",
+                 p=sprintf("%2.1f", predicted_rating[1]),
+                 i=sprintf("%2.1f - %2.1f", predicted_rating[2], predicted_rating[3]), 
+                 r="6.3")
+kable(df, col.names=c("Movie Title", "Predicted Rating", "95% Prediction Interval", "Actual Rating"))
+```
+
+The model predicted IMDB rate (6.4), which is very close to the actual IMDB rating (6.3), thus we can conclude that model has indeed a predictive power. 
+
+* * *
+
+## Part 6: Conclusion
+
+From the results above, I conclude that multiple linear regression model is the powerful tool to predict the response variable if there is a linear relationship. We have succesfully predicted IMDB rating of Suicide Squad with parameters ***title_type***,  ***genre***, ***runtime***, ***mpaa_rating***, ***best_pic_nom***, ***best_dir_win***, ***top200_box***. The predicted IMDB rating was 6.4 compared to the actual one of 6.3, even though the total explained variability with the penalty (adjusted R2) was equal to 0.319.
+
+As we intially stated the question "Is there any factor that has a statistically significant power to predict the IMDB rating of the US-produced movie (one has to be cautious with regards to collinear variables)?", we can answer yes. There are several factors (***title_type***,  ***genre***, ***runtime***, ***mpaa_rating***, ***best_pic_nom***, ***best_dir_win***, ***top200_box***) that in combination have a statistically significant power of predict the IMDB rating of the US-produced movie. This can be confirmed by the p-values < 0.05 of these predictors for at least one level.
+
+But there is a room for improvement, as we have noticed the IMDB ratings are slightly right skewed. Thus we might need to normalize its distribution by such methods as bootstrapping.

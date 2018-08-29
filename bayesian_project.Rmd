@@ -1,0 +1,282 @@
+---
+title: "Bayesian modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+`r knitr::opts_chunk$set(message=FALSE, warning=FALSE)`
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(BAS)
+library(knitr)
+library(gridExtra)
+library(corrplot)
+library(GGally)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+* * *
+
+## Part 1: Data
+
+The dataset contains the information about different movie and their characteristics (such as genre, release date, rating on IMDB, actors in the movie, etc.) derived from Rotten Tomatoes (http://www.rottentomatoes.com) and IMDB (http://www.imdb.com).
+
+Generalizability: As the observations in this dataset were randomly sampled from the above mentioned sources, we can say that it is a representative sample of US movies produced and released before 2016. The results from inference on this dataset can be generalizable to the target population.
+
+Causality: As the movies were randomly selected - not randomly assigned, we can't make the conclusions about causality between the observations.
+
+* * *
+
+## Part 2: Data manipulation
+
+Below I created new variables **feature_film**, **drama**, **mpaa_rating_R**, **oscar_season** and **summer_season**.
+
+```{r}
+#Construct new variables
+movies = movies %>% 
+  mutate(feature_film = factor(ifelse(title_type == "Feature Film", "yes", "no")),
+         drama = factor(ifelse(genre == "Drama", "yes", "no")),
+         mpaa_rating_R = factor(ifelse(mpaa_rating == "R", "yes", "no")),
+         oscar_season = factor(ifelse(thtr_rel_month %in% 10:12, "yes", "no")),
+         summer_season = factor(ifelse(thtr_rel_month %in% 5:8, "yes", "no")))
+```
+
+Here is a short overview on the variables and corresponding reference columns:
+
+```{r}
+movies %>% 
+  select(title_type, feature_film, genre, drama, mpaa_rating, mpaa_rating_R, thtr_rel_month, oscar_season, summer_season) %>% 
+  slice(1:5) %>% 
+  kable()
+```
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+Our main research question: **What is the best Bayesian model to predict audience_score?**.
+
+To answer this question, we should first look at the relationship between **audience_score** and earlier created variables.
+
+```{r, fig.width=10, fig.height=3}
+plot1 <- ggplot(movies, aes(x=feature_film, y=audience_score))+
+            geom_boxplot(colour="red")
+plot2 <- ggplot(movies, aes(x=drama, y=audience_score))+
+            geom_boxplot(colour="blue")
+plot3 <- ggplot(movies, aes(x=mpaa_rating_R,y=audience_score))+
+            geom_boxplot(colour="green")
+plot4 <- ggplot(movies, aes(x=oscar_season, y=audience_score))+
+            geom_boxplot(colour="yellow")
+plot5 <- ggplot(movies, aes(x=summer_season,y=audience_score))+
+            geom_boxplot(colour="violet")
+grid.arrange(plot1,plot2,plot3,plot4,plot5, ncol=5)
+```
+
+From the plots we can see that **feature_film** and **drama** categories have a clear within group differences in terms of median and quartiles. There is not an obvious difference between levels of **mpaa_rating_R**, **oscar_season** and **summer_season**.
+
+To confirm the visual differences between the groups, we will look at the summary statistics for each category.
+
+```{r}
+features = c("feature_film", "drama", "mpaa_rating_R", "oscar_season", "summer_season")
+summary_table = NULL
+for(i in features){
+  summary_table = rbind(summary_table, c(paste(i, "yes", sep = "_"), summary(movies$audience_score[which(movies[,i] == "yes")])))
+  summary_table = rbind(summary_table, c(paste(i, "no", sep = "_"), summary(movies$audience_score[which(movies[,i] == "no")])))
+}
+kable(summary_table)
+```
+
+From the summary statistic, we can see:
+
+- **feature_film** levels (yes and no) have difference between medians in audience_score of 23.5;
+- **drama** levels (yes and no) have difference between medians in audience_score of 9;
+- **oscar_season** levels (yes and no) have difference between medians in audience_score of 5.
+
+The rest of the variables have quite similar distributions and medians.
+
+To see if there is any correlation between categories and the **audience_score** we will plot the graph below:
+
+```{r, fig.height=6, fig.width=6}
+numeric_movies = movies %>% 
+  mutate_each(funs(as.numeric))
+
+ggpairs(numeric_movies %>% select(audience_score, feature_film, drama, mpaa_rating_R, oscar_season, summer_season))
+```
+
+**audience_score** has the highest correlation with **feature_film** (Pearson's correlation = -0.295) and **drama** (Pearson's correlation = 0.139). 
+
+There is also a moderate negative correlation between **summer_season** and **oscar_season** (Pearson's correlation = -0.442) due to the opposite seasons for these categories (May to August for summer_season and October to December for oscar_season).
+
+The rest variables have a low correlation between each other (absolute Pearson's correlation values < 0.26).
+
+* * *
+
+## Part 4: Modeling
+
+The modeling task is to develop a Bayesian regression model to predict **audience_score** from the following explanatory variables:
+
+- feature_film
+- drama
+- runtime
+- mpaa_rating_R
+- thtr_rel_year
+- oscar_season
+- summer_season
+- imdb_rating
+- imdb_num_votes
+- critics_score
+- best_pic_nom
+- best_pic_win
+- best_actor_win
+- best_actress_win
+- best_dir_win
+- top200_box
+
+First, we should check for collinearity between these variables. For his, we will plot a Pearson correlation matrix.
+
+```{r}
+numeric_movies %>% 
+  select(audience_score, feature_film, drama, runtime, mpaa_rating_R, thtr_rel_year, oscar_season, summer_season, imdb_rating, imdb_num_votes, critics_score, best_pic_nom, best_pic_win, best_actor_win, best_actress_win, best_dir_win, top200_box) %>% 
+  cor(use = "complete.obs") %>% 
+  corrplot(method="shade",
+        shade.col=NA,
+        cl.pos = "n",
+        tl.col="black",
+        tl.srt=45)
+```
+
+We can notice that **audience_score** is strongly correlated with **imdb_rating** (0.865), and **critics_score** (0.704). Correlation between **summer_season** and **oscar_season** have been discussed in the EDA section. We can also see a strong positive correlation between **critics_score** and **imdb_rating** (0.765).
+
+###Model selection
+
+For Bayesian linear regression model, we use all chosen explanatory variables as discussed above. To fit a large number of predictors, we use Markov Chain Monte Carlo (MCMC) method. This method is able to cope with large number of model combinations. 
+
+Zellner-Siow Cauchy distribution was used for he prior probabilities for the regression coefficients; and uniform distribution was used for the prior probabilities for all models.
+
+We chose Zellner-Siow Cauchy prior as it prevents BMA from disproportionately favoring the null model as a result of the Bartlett-Lindley paradox and it also allows for uncertainty in the prior variance parameter g.
+
+```{r, fig.height=4, fig.width=10}
+basLM = movies %>% 
+  select(audience_score, feature_film, drama, runtime, mpaa_rating_R, thtr_rel_year, oscar_season, summer_season, imdb_rating, imdb_num_votes, critics_score, best_pic_nom, best_pic_win, best_actor_win, best_actress_win, best_dir_win, top200_box) %>% 
+  bas.lm(audience_score ~ ., data=., method='MCMC',
+                 prior='ZS-null', modelprior=uniform())
+```
+
+### Model diagnostics
+
+```{r, fig.height=4, fig.width=10}
+#diagnostic charts of the regression fitting process
+par(mfrow=c(1,3))
+plot(basLM, which=c(1, 2), ask=FALSE)
+plot(basLM, which=4, ask=FALSE, cex.lab=0.5)
+```
+
+
+From diagnostic charts of the regression fitting, we can see that there is no random scatter between the residuals and fitted values. It has rather a curved pattern instead of the plane line and indicates three potential outlier observations (126, 216 and 251) with residuals above 40.
+
+The second graph with **Model Probabilities** represents more than 6,000 unique models discovered for the current set of variables. As the curve saturates, it indicates that models after first 1,000 don't add much more additional probability. 
+
+The **Inclusion Probabilities** graph represents the importance of the different factors by the marginal posterior inclusion probability (height of bars). Besides the intercept there are two more variables that are important for predicting **audience_score**: imdb_rating and sritics_score. However, this plot should not serve as the indication of the variables to exclude due to the possible collinearity.
+
+Below we should check the variable combinations for top 20 models.
+
+```{r, fig.height=5, fig.width=7}
+image(basLM, rotate=FALSE)
+```
+
+The first model has the log posterior probability of 2.756. This model includes intercept and two predictors: **imdb_rating** and **sritics_score**. The second model includes also the **runtime** predictor and has log posterior probability of 2.587. Third model and above have much lower log posterior probabilities.
+
+```{r, fig.height=4, fig.width=5}
+diagnostics(basLM, type="model",  pch=16)
+```
+
+Checking the posterior model probabilities, the graph above indicates a normal distribution. Each point on the graph corresponds to posterior inclusion probability of one variable. As all points are in pretty close agreement, we can conclude that the number of MCMC iterations were sufficient to reach a normal distribution.
+
+### Model coefficients
+
+Below we present Marginal Posterior Summaries of Coefficients from the BMA.
+
+```{r}
+summary(basLM) %>% 
+  data.frame(names = row.names(.), .) %>% 
+  rename(`P(B != 0 | Y)` = P.B....0...Y.) %>% 
+  select(names, `P(B != 0 | Y)`) %>% 
+  mutate(`P(B != 0 | Y)` = round(`P(B != 0 | Y)`, 3)) %>% 
+  slice(1:17) %>% 
+  kable()
+```
+
+This table indicates that there is 99.9% chance that **imdb_rating** will be included in the final model. The **critics_score** has 88% and **runtime** has 45.9% chance to be included in the final model.
+
+Below we plot the posterior distributions of the regression coefficients from the first model that includes **Intercept**, **imdb_rating**, and **critics_score**.
+
+```{r, fig.width=10, fig.height=4}
+par(mfrow=c(1,3))
+plot(coefficients(basLM), subset=c(1, 9, 11), ask=FALSE)
+```
+
+The vertical line at zero indicates the mass under Bayesian Model Averaging, i.e., the posterior probability of the coefficient being zero, which is higher for critics_score.
+
+* * *
+
+## Part 5: Prediction
+
+I am interest to utilize the model for prediction of **Suicide Squad** Action movie released in 2016.
+If the model has a predictive power, the predicted **audience_score** should be similar to the real reported score.
+
+```{r}
+real_data = data.frame(feature_film = "yes", drama = "no", 
+                       runtime=123, mpaa_rating_R = "no", 
+                       thtr_rel_year = 2006, oscar_season = "no", 
+                       summer_season = "yes", imdb_rating = 6.2, 
+                       imdb_num_votes = 399696, critics_score = 4.7, 
+                       best_pic_win = "no", best_actor_win = "no", 
+                       best_actress_win = "yes", best_pic_nom = "no", 
+                       best_dir_win="no", top200_box = "yes")
+
+predicted_audience_score = predict(basLM, real_data, estimator="BMA", se.fit=TRUE)
+predME <- qt(0.95, df=predicted_audience_score$se.bma.pred[1]) *
+                     mean(predicted_audience_score$se.bma.pred)
+
+df = data.frame(q="Suicide Squad",
+           w=sprintf("%2.1f", predicted_audience_score$Ybma),
+           e=sprintf("%2.1f - %2.1f", predicted_audience_score$Ybma - predME, predicted_audience_score$Ybma + predME),
+           r=62)
+
+kable(df, col.names=c("Movie Title", "Predicted Rating", "95% Prediction Interval", "Actual Rating"))
+```
+
+The model predicted **audience_score** of 54.4, which is quite close to the actual audience_score of 62. Based on the 95% prediction interval, we conclude that model has indeed a predictive power as the actual score is within this range.
+
+The data for construction of predictors table was taken from IMDb (http://www.imdb.com/title/tt1386697/?ref_=fn_al_tt_1) and Rotten Tomatoes (https://www.rottentomatoes.com/m/suicide_squad_2016/).
+
+* * *
+
+## Part 6: Conclusion
+
+From the results above, I conclude that Bayesian modeling is the powerful tool to predict the response variable even if the number of possible models is large. We have successfully predicted audience score of Suicide Squad with parameters **imdb_rating** and **critics_score**. The predicted audience score was 54.4 compared to the actual one of 62 that fell in the 95% prediction interval (35.8-72.9).
+
+We initially stated the question "What is the best Bayesian model to predict audience_score?" and now we can answer that top 1 model includes two parameters **imdb_rating** and **critics_score**.
+
+But there is a room for improvement, as we have noticed that the model residuals are not randomly scattered. Thus, we might need to:
+
+- look into each variable distribution separately and determine which one causes this phenomena;
+- evaluate other predictor candidates for inclusion in the model;
+- find other factors that were not included into initial set of predictors, but might have a strong effect on the ratings.

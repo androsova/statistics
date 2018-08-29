@@ -1,0 +1,207 @@
+---
+title: "Statistical inference with the GSS data"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(knitr)
+```
+
+### Load data
+
+```{r load-data}
+load("gss.Rdata")
+```
+
+* * *
+
+## Part 1: Data
+
+The General Social Survey (GSS) data was collected on societal change (such as as national spending priorities, sexual behavior, race relations, quality of life, and confidence in institutions) in adults (18+) living in households in the United States. In general, data was collected by computer-assisted personal interview (CAPI), face-to-face interview or telephone interview.
+
+The GSS sample is drawn randomly based on an area probability design, thus we can make the inference for the adult population living in households in the United States.
+
+As participation in the study is strictly voluntary, we can classify this study as observational/survey. This implies that subjects were not randomly assigned to preform specific tasks or to be exposed to specific environmental conditions. In such observation studies, causality cannot be inferred from the data analysis, the results might suggest only correlation.
+
+* * *
+
+## Part 2: Research question
+
+Is there a relationship between abortion decision and religion belief (Protestant, Catholic, Jewish, etc.)?
+
+**Motivation:** As religions have different perspectives on the immorality of abortion, this assumption might have an effect on the abortion rate depending on religious views. 
+
+I would like to test the hypothesis whether abortion decision is dependent on religious views at .05 significance level.
+
+**Variables for exploration:**
+
+- abany (Abortion if woman wants for any reason: Yes, No)
+
+- relig (Religous preference: Protestant, Catholic, Jewish, None, Other, Buddhism, Hinduism, Other Eastern, Moslem/Islam, Orthodox-Christian, Christian, Native American, Inter-Nondenominational)
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+###Data overview
+
+To investigate the question, first we would like to reduce the dataset to known variables.
+
+```{r}
+gss_fitered = gss %>% 
+  filter(!is.na(abany)) %>% 
+  filter(!is.na(relig)) %>% 
+  select(abany, relig)
+nrow(gss_fitered)
+table(gss_fitered$abany)
+table(gss_fitered$relig)
+```
+
+Upon filtering we obtained 31,714 variables, among which we have 12,850 abortions cases, 11 classified regilions as well as others and atheists.
+
+```{r}
+prop.table(table(gss_fitered$abany))
+sort(prop.table(table(gss_fitered$relig)), decreasing = TRUE)
+```
+
+Overal rate of abortion in this dataset is 40,5% and the largest represented religions are Protestant (59.5%) and Catholic (24,3%). 10,6% of 31,714 participants are atheists.
+
+Now it is time to look at the relationships between categories:
+
+```{r}
+abortion_rate_function = function(abany){
+  round(length(which(abany == "Yes"))*100/length(abany),2)
+}
+
+abort_percent_religion = gss_fitered %>% 
+  group_by(relig) %>% 
+  summarise(abortion_rate = abortion_rate_function(abany)) %>% 
+  rename(religion = relig)
+
+abort_percent_religion %>% 
+  ggplot(aes(x = religion, y = abortion_rate, fill = religion))+
+  geom_bar(stat = "identity")+
+  theme_minimal()+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  xlab("Religious beliefs")+
+  ylab("Abortion rate (%)")
+```
+
+On this plot we can see a high variability of abortion rates among different religions. The highest abortion rate is in Jewish families (78.03%), followed by Buddhism (70.59%) and aetheist (66.05%). 
+
+Additionally, I am interested to see the relationship between abortion rates, religion and different US regions:
+
+```{r}
+abortion_religion_function = function(df){
+  result = df %>% 
+    group_by(relig) %>% 
+    summarise(abortion_rate = abortion_rate_function(abany))
+  print(result)
+}
+
+abort_percent_region = gss %>%
+  filter(!is.na(abany)) %>% 
+  filter(!is.na(relig)) %>% 
+  group_by(region) %>% 
+  group_by(relig, add=TRUE) %>% 
+  summarise(abortion_rate = abortion_rate_function(abany)) %>% 
+  rename(religion = relig)
+
+abort_percent_region %>% 
+  ggplot(aes(region, abortion_rate, fill=religion)) +
+  geom_bar(stat="identity")+
+  theme_minimal()+
+  theme(axis.text.x=element_text(angle = 90, hjust = 1))+
+  xlab("US region")+
+  ylab("Abortion rate (%)")
+```
+
+From this figure, we can see that three US regions have the highest cummulative percentage of abortions. These are: New England, Middle Atlantic and Mountain States. Among the prevalent religions in these three states are Hinduism, Jewish, Buddhism, Orthodox-Christian and Other Eastern religions. These differences might indicate that there is a correlation between religion and abortions.
+
+###Summary statistics
+
+Here is the overview of the total cases in each category:
+
+```{r}
+summary(gss_fitered)
+```
+
+```{r}
+summary(abort_percent_religion$abortion_rate)
+sd(abort_percent_religion$abortion_rate)
+```
+
+On average, abortion rate among the religions is equal to 52.60%, with lowest abortion rate of 35.29% and highest 78.03%. 
+
+The standard deviation in abortion rates between different religions is equal to 14.43.
+
+* * *
+
+## Part 4: Inference
+
+To answer the question "Is there a relationship between abortion decision and religion belief (Protestant, Catholic, Jewish, etc.)?", we need to use the chi-square independence test.
+
+**Hypotheses**
+
+Null hyphothesis: there is no relationship between abortion decision and religion.
+
+Alternative hyphothesis: there is a relationship between abortion decision and religion.
+
+**Conditions**
+
+1. Independence:
+
+- study use random sample/assignment -> TRUE, GSS samples were randomly collected
+- there was sampling without replacement, thus n < 10% of population -> TRUE, 31,714 individuals are less then 10% of the population
+- each case only contributes to one cell in the table -> TRUE, the abortion rates are calculated for each religion exclusively
+
+2. Sample size: 
+
+- each particular scenario (i.e. cell) must have at least 5 expected cases -> NOT TRUE FOR NATIVE AMERICAN (see table below), thus we have to exclude this religion category from our comparison to be able to sattisfy all the conditions of chi-square independence test.
+
+```{r}
+kable(t(table(gss_fitered$abany, gss_fitered$relig)))
+gss_fitered = gss_fitered %>% 
+  filter(relig != "Native American")
+```
+
+**Method(s) to be used**
+
+chi-square independence test is applied to evaluate relationship between two categorical variables. In our case, Abortion (Yes, No) and Religion (Protestant, Catholic, Jewish, None, Other, Buddhism, Hinduism, Other Eastern, Moslem/Islam, Orthodox-Christian, Christian, Inter-Nondenominational).
+Using the GSS sample data, for chi-square independence test we have to find:
+
+- **Degrees of freedom** (equal to ***(R - 1) * (C - 1)***, where ***R*** is the number of levels for one catagorical variable, and ***C*** is the number of levels for the other categorical variable)
+- **Expected frequency counts** (equal to ***(nr x nc) / n***, where ***nr*** is the total number of sample observations at level r of Variable ***A***, ***nc*** is the total number of sample observations at level ***c*** of Variable ***B***, and ***n*** is the total sample size)
+- **Test statistic** calculated by chi-square random variable (Χ2)
+- **P-value** associated with the test statistic (the probability of observing a sample statistic as extreme as the test statistic)
+
+**Inference**
+
+```{r}
+gss_fitered %>% 
+  mutate(relig = factor(relig)) %>% 
+  table() %>% 
+  chisq.test()
+```
+
+chi-square independence test results include:
+
+- Test statistic: X2 = 1600.9, which indicates a large difference between obsserved counts and the expected ones
+- Degrees of freedom = 11, which defines the shape of X2 distribution to be more symmetric
+- p-value < 2.2e-16, which is below the 0.05 significance level indicating the rejection of null hypothesis
+
+As the p-value < 2.2e-16 is much smaller than the .05 significance level, we do reject the null hypothesis that abortion decision is independent of religion belief. In other words, there is a statistically significant indication of dependences between abortion and religion.
+
+For these results, I didn't include calculation of confidence intervals as I am working with categorical variables with more than two levels, thus there is no associated confidence interval.

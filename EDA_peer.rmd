@@ -1,0 +1,255 @@
+---
+title: "Peer Assessment I"
+output:
+  html_document: 
+    pandoc_args: [
+      "--number-sections",
+    ]
+---
+
+
+First, let us load the data and necessary packages:
+
+```{r load, message = FALSE, warning=FALSE}
+load("ames_train.Rdata")
+library(MASS)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(BAS)
+library(gridExtra)
+```
+
+#
+
+Make a labeled histogram (with 30 bins) of the ages of the houses in the data set, and describe the distribution.
+
+
+```{r Q1, message = FALSE, warning=FALSE}
+ames_train_modified = ames_train %>% 
+  mutate(Age = 2017 - Year.Built) %>% 
+  filter(!is.na(Age))
+hist(ames_train_modified$Age, breaks = 30, main = "Histogram of houses age distribution", xlab = "House Age", col = "green")
+```
+
+
+* * *
+
+The distribution of the houses's ages is right-skewed, non-symmetrical and multimodal (has several picks). The right-skewed distribution can be explained by the high number of new houses.
+
+* * *
+
+#
+
+The mantra in real estate is "Location, Location, Location!" Make a graphical display that relates a home price to its neighborhood in Ames, Iowa. Which summary statistics are most appropriate to use for determining the most expensive, least expensive, and most heterogeneous (having the most variation in housing price) neighborhoods? Report which neighborhoods these are based on the summary statistics of your choice. Report the value of your chosen summary statistics for these neighborhoods.
+
+
+```{r Q2, message = FALSE, warning=FALSE, fig.width=10, fig.height=6}
+ordered_neighb = ames_train_modified %>% 
+  group_by(Neighborhood) %>% 
+  summarise(Median_price = median(price)) %>% 
+  arrange(desc(Median_price))
+ames_train_modified = ames_train_modified %>% 
+  mutate(Neighborhood = factor(Neighborhood, levels = ordered_neighb %>% .$Neighborhood %>% as.character()))
+ggplot(ames_train_modified, aes(x = Neighborhood, y = price, fill=factor(Neighborhood)))+ 
+  geom_boxplot()+
+  labs(y = "Price")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0))+ 
+  scale_y_continuous(labels = scales::comma)
+```
+
+
+* * *
+
+To identify the most expensive and least expensive neighborhood, I arranged the neigboruhoods in decreasing order by their median price. I selected median metric as it is robust to outliers. Here is the table, from which I conclude that Stone Brook is the most expensive neighborhood (median price is 340691.5) and Meadow Village is the least expensive neighborhood (median price is 85750.0).
+
+`r kable(ordered_neighb)`
+
+To get the most heterogeneous neighborhood, I calculate the standard deviation of prices in each neighborhood. From the following table (of top 5 most heterogeneous neighborhoods), I conclude that Stone Brook has the largest SD in prices (123459.10).
+
+`r ames_train %>% group_by(Neighborhood) %>% summarise(Price_SD = sd(price)) %>% arrange(Price_SD) %>%  slice(1:5) %>% kable()`
+
+* * *
+
+#
+
+Which variable has the largest number of missing values? Explain why it makes sense that there are so many missing values for this variable.
+
+```{r Q3, message = FALSE, warning=FALSE}
+colSums(is.na(ames_train)) %>% 
+  sort(., decreasing = TRUE) %>% .[1:5]
+```
+
+
+* * *
+
+Above I presented the top 5 variables with the largest number of missing values. Pool quality has the largest number of missing values. As pool quality is not evaluated when the pool is absent, this explains large number of missing values, as most of the houses (`r length(which(is.na(ames_train$Pool.QC)))/nrow(ames_train)*100` %) don't have a pool. 
+
+* * *
+
+#
+
+We want to predict the natural log of the home prices. Candidate explanatory variables are lot size in square feet (Lot.Area), slope of property (Land.Slope), original construction date (Year.Built), remodel date (Year.Remod.Add), and the number of bedrooms above grade (Bedroom.AbvGr). Pick a model selection or model averaging method covered in the Specialization, and describe how this method works. Then, use this method to find the best multiple regression model for predicting the natural log of the home prices.
+
+
+```{r Q4, message = FALSE, warning=FALSE}
+basLM = ames_train %>% 
+  mutate(price = log(price)) %>% 
+  select(price, Lot.Area, Land.Slope, Year.Built, Year.Remod.Add, Bedroom.AbvGr) %>% 
+  bas.lm(price ~ ., data=., method='MCMC',
+                 prior='ZS-null', modelprior=uniform())
+```
+
+* * *
+
+For this tast, I selected Bayesian Model Averaging model selection based on Markov Chain Monte Carlo (MCMC) method. This method is able to cope with large number of model combinations. It randomly samples from a probability distribution based on constructing a Markov chain that has the desired distribution as its equilibrium distribution.
+
+Zellner-Siow Cauchy distribution was used for he prior probabilities for the regression coefficients; and uniform distribution was used for the prior probabilities for all models.
+
+We chose Zellner-Siow Cauchy prior as it prevents BMA from disproportionately favoring the null model as a result of the Bartlett-Lindley paradox and it also allows for uncertainty in the prior variance parameter g.
+
+**Model diagnostics**
+
+```{r, message = FALSE, warning=FALSE, fig.width=10, fig.height=4}
+#diagnostic charts of the regression fitting process
+par(mfrow=c(1,3))
+plot(basLM, which=c(1, 2), ask=FALSE)
+plot(basLM, which=4, ask=FALSE, cex.lab=0.5)
+```
+
+From diagnostic charts of the regression fitting, we can see that there is no random scatter between the residuals and fitted values. It has rather a curved pattern instead of the plane line and indicates three potential outlier observations (66, 428 and 998).
+
+The second graph with Model Probabilities represents 12 unique models discovered for the current set of variables. Models 11 and 12 have the highest cumulative probabilities.
+
+The Inclusion Probabilities graph represents the importance of the different factors by the marginal posterior inclusion probability (height of bars). This plot indicates that all variables are important for predicting natural log of the home prices.
+
+To confirm the findings above, we check the variable combinations for top 5 models.
+
+```{r, message = FALSE, warning=FALSE, fig.height=4, fig.width=6}
+image(basLM, top.models = 5, rotate=FALSE)
+```
+
+According to this figure, first model that includes **all** variables is the best multiple regression model (posterior probability of `r summary(basLM)["PostProbs","model 1"]`) for predicting the natural log of the home prices.
+
+
+* * *
+
+#
+
+Which home has the largest squared residual in the previous analysis (Question 4)? Looking at all the variables in the data set, can you explain why this home stands out from the rest (what factors contribute to the high squared residual and why are those factors relevant)?
+
+
+```{r Q5, message = FALSE, warning=FALSE}
+squared_residuals = (basLM$Y - fitted(basLM, estimator="BMA"))^2
+data.frame(Observation_no = 1:length(squared_residuals), Squared_residual = squared_residuals, House_PID = ames_train$PID) %>% 
+  mutate(Squared_residual = round(Squared_residual, 2)) %>% 
+  arrange(desc(Squared_residual)) %>% 
+  slice(1:5) %>% 
+  kable()
+```
+
+From the residuals plot, we can see that observation 428 had the highest deviating residual. To confirm this finding, I calculated the squared residuals for each house. Indeed observation No 428 has the highest squared residual (4.37) and corresponds to house with Parcel identification number 902207130.
+
+```{r, message = FALSE, warning=FALSE, fig.width=10, fig.height=7, echo=FALSE}
+ames_train_modified = ames_train %>% 
+  mutate(price = log(price)) %>% 
+  mutate(outlier = factor(ifelse(PID == 902207130, "outlier", "non-outlier")))
+
+g1 = ggplot(ames_train_modified, aes(x = price, y = Lot.Area))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to total house area")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"),guide="none")
+
+g2 = ggplot(ames_train_modified, aes(x = price, y = Year.Remod.Add))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to house remodel date")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"),guide="none")
+
+g3 = ggplot(ames_train_modified, aes(x = price, y = Overall.Cond))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to overall condition")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"))
+
+g4 = ggplot(ames_train_modified, aes(x = price, y = TotRms.AbvGrd))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to number of rooms above grade")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"),guide="none")
+
+g5 = ggplot(ames_train_modified, aes(x = price, y = Fireplaces))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to number of fireplaces")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"),guide="none")
+
+g6 = ggplot(ames_train_modified, aes(x = price, y = Garage.Area))+
+  geom_point(aes(colour = factor(outlier)))+
+  labs(title = "Log price relationship to size of garage in square feet")+
+  scale_color_manual(values=c("outlier" = "red", "non-outlier" = "black"))
+
+grid.arrange(g1, g2, g3, g4, g5, g6, ncol=3, widths = c(0.3, 0.3, 0.4))
+```
+
+
+* * *
+
+This house was sold for 13,000 US dollars, however the houses in the same category are sold for much higher. I checked the price dependency on total house area, remodel date, overall condition, number of rooms, number of fireplaces and size of garage. The plots above indicate that houses with the same parameters as under-estimated house have a higher cost. The outlying observation is markered as an outlier in red. 
+
+In a detailed look, we can see that houses with the similar lot area (+/- 100 square feet) as an outlier have a log price range from `r round(min(ames_train_modified$price[which(ames_train_modified$Lot.Area[-428] < ames_train_modified$Lot.Area[428]+100 & ames_train_modified$Lot.Area[-428] > ames_train_modified$Lot.Area[428]-100)]),2)` to `r round(max(ames_train_modified$price[which(ames_train_modified$Lot.Area[-428] < ames_train_modified$Lot.Area[428]+100 & ames_train_modified$Lot.Area[-428] > ames_train_modified$Lot.Area[428]-100)]),2)`, while the outlier house is priced at `r round(ames_train_modified$price[428], 2)`. The same situation is for houses remodeled in the same year (log prices start at `r round(min(ames_train_modified$price[which(ames_train_modified$Year.Remod.Add[-428] == ames_train_modified$Year.Remod.Add[428])]),2)`), with the same overall condition (log price is above `r round(min(ames_train_modified$price[which(ames_train_modified$Overall.Cond[-428] == ames_train_modified$Overall.Cond[428])]),2)`), with the same number of rooms (log prices start at `r round(min(ames_train_modified$price[which(ames_train_modified$TotRms.AbvGrd[-428] == ames_train_modified$TotRms.AbvGrd[428])]),2)`), with the same number of fireplaces (log prices start at `r round(min(ames_train_modified$price[which(ames_train_modified$Fireplaces[-428] == ames_train_modified$Fireplaces[428])]),2)`), and with the same size of garage +/- 50 square feet (log prices start at `r round(min(ames_train_modified$price[which(ames_train_modified$Garage.Area[-428] < ames_train_modified$Garage.Area[428]+50 & ames_train_modified$Garage.Area[-428] > ames_train_modified$Garage.Area[428]-50)]),2)`). We can see that for all these major factors, the average house price is much higher, thus shifting this observation further from the mean and impacting its squared residual.
+
+* * *
+
+#
+
+Use the same model selection method you chose in Question 4 to again find the best multiple regression model to predict the natural log of home prices, but this time **replacing Lot.Area with log(Lot.Area)**. Do you arrive at a model including the same set of predictors?
+
+
+```{r Q6, message = FALSE, warning=FALSE}
+modified_lot_area = ames_train %>% 
+  mutate(price = log(price),
+         Lot.Area = log(Lot.Area)) %>% 
+  select(price, Lot.Area, Land.Slope, Year.Built, Year.Remod.Add, Bedroom.AbvGr)
+basLM_2 = modified_lot_area %>% 
+  bas.lm(price ~ ., data=., method='MCMC',
+                 prior='ZS-null', modelprior=uniform())
+```
+
+* * *
+
+Upon replacing lot Area with log Lot Area, I re-run MCMC with Zellner-Siow Cauchy prior. Now we will check top 5 multiple regression models.
+
+```{r, message = FALSE, warning=FALSE, fig.height=4, fig.width=6}
+image(basLM_2, top.models = 5, rotate=FALSE)
+```
+
+Unlike to previous model, we have a different set of predictors in the model with the highest posterior probability (`r summary(basLM_2)["PostProbs","model 1"]`). This model excluded **Land.Slope** and included: **log(Lot.Area), Year.Built, Year.Remod.Add** and **Bedroom.AbvGr**.
+
+Descreased number of predictors in the final model may be due to the fact that natural log of lot area is strongly correlated with **Land.Slope** but has a higher marginal inclusion probability (thus Land.Slope is excluded from the model).
+
+* * *
+
+#
+
+Do you think it is better to log transform Lot.Area, in terms of assumptions for linear regression? Make graphs of the predicted values of log home price versus the true values of log home price for the regression models selected for Lot.Area and log(Lot.Area). Referencing these two plots, provide a written support that includes a quantitative justification for your answer in the first part of question 7.
+
+```{r Q7, message = FALSE, warning=FALSE, fig.width=10, fig.height=4.5}
+par(mfrow=c(1,2))
+plot(predict(basLM)$Ybma, modified_lot_area$price,
+      xlab="Predicted values of log home price",ylab="Actual values of log home price", main = "Model with Lot.Area")
+abline(a=0,b=1)
+ 
+plot(predict(basLM_2)$Ybma, modified_lot_area$price,
+      xlab="Predicted values of log home price",ylab="Actual values of log home price",
+     main = "Model with log(Lot.Area)")
+abline(a=0,b=1)
+```
+
+* * *
+
+Log-transformation of Lot.Area improves the performance of the multiple regression model as it helps to capture a linear relationship between log price and log lot area. 
+
+The first graph (on the left) captures a relationship between predicted and actual log-transformed prices based on the model with simple Lot.Area. It has a slight S-shape and points do not lay on the straight line. Pearsons correlation between predicted and actual log-transformed prices on this graph is equal to `r round(cor(predict(basLM)$Ybma, modified_lot_area$price),2)`.
+
+The second graph (on the right) represents the outcome from model with log-transformed Lot.Area. The points are more evenly distributed along the abline and have more line-resembling shape than the first plot. Pearsons correlation between predicted and actual log-transformed prices on the second graph is equal to `r round(cor(predict(basLM_2)$Ybma, modified_lot_area$price),2)`. This is higher than in the first model.
+
+The log-transforming of Lot.Area improves the multiple regression model as it results in better correlation (R) as shown above by Pearson's correlation coefficient.
+
+* * *

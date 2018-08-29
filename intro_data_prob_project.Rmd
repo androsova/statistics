@@ -1,0 +1,238 @@
+---
+title: "Exploring the BRFSS data"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+require(maps)
+library(fiftystater)
+```
+
+### Load data
+
+```{r load-data}
+load("brfss2013.RData")
+```
+
+* * *
+
+## Part 1: Data
+
+The Behavioral Risk Factor Surveillance System (BRFSS) collected data on preventive health practices and risk behaviors from the non-institutionalised adult population (i.e. 18 years and older) residing in the US. 
+
+The results from analysis of this data cannot be generalizable to the whole population as interviewed subjects must have a cellular telephone and reside in a private residence or college housing. As the data was collected from a randomly selected adult in a household  with an equal probability of selection ([source](https://www.cdc.gov/brfss/factsheets/pdf/dbs_brfss_survey.pdf)), we can make the inference for the state-specific population who have a middle class income (as suggested by availability of cell phone and private/college residence).
+
+This is an observational study, thus subjects were not randomly assigned to preform specific tasks or to be exposed to specific environmental conditions. In such observation studies, causality cannot be inferred from the data analysis, the results might suggest only correlation.
+
+* * *
+
+## Part 2: Research questions
+
+**Research question 1: Is the number of sleeping hours correlated with poor mental or physical health?**
+
+**Motivation:** Due to the busy work/study schedule of adult population, many people sleep less than 7-8 hours a day. I am interested to investigate if the well-being (such a mental and physical health) is affected in the individuals who sleep more or less than 7-8 hours a day. 
+
+**Variables for exploration:**
+
+- sleptim1 (How Much Time Do You Sleep)
+
+- physhlth (Number Of Days Physical Health Not Good)
+
+- menthlth (Number Of Days Mental Health Not Good)
+
+**Research question 2: In which US state(s) people have on average high body mass index (BMI) and drink large number of sugar-sweetened drinks?**
+
+**Motivation:** Depending on the region of the country, people are more prone to follow the trend of healthy eating, which includes reduced number of sweetened drinks. The health awareness also results in the lower BMI of individual, thus I would like to investigate if there is a dependence between BMI and number of sugar-sweetened drinks. I would like also to explore if there is any US state with a higher BMI on average.
+
+**Variables for exploration:**
+
+- X_state: State Fips Code
+
+- X_bmi5: Computed Body Mass Index
+
+- ssbfrut2: How Often Did You Drink Sugar-Sweetened Drinks?
+
+**Research question 3: Is the alcohol drinking habit is correlated with gender?**
+
+**Motivation:** Women are known to be prone to the alcoholism. The higher number of drinks per month indicates a tendency to a drinking habit. Thus, I would like to explore if on average the higher number of drinks per month is more pronounce in females then in males.
+
+**Variables for exploration:**
+
+- X_drnkmo4: Computed Total Number Drinks A Month
+
+- sex: Respondents Sex
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+**Research question 1: Is the number of sleeping hours correlated with poor mental or physical health?**
+
+As we are interested in the sleep time within the 24hours, we filter out the observation which exceed 24-hour timeframe or have less then 1 hour of sleep. 
+
+```{r}
+brfss_sleep = brfss2013 %>% 
+  filter(sleptim1 <= 24 & sleptim1 >0) #The observation on hours of sleep is expected to include only variable between 1 and 24, see http://www.cdc.gov/brfss/annual_data/2013/pdf/2013_Calculated_Variables_Version15.pdf
+
+summary(brfss_sleep$sleptim1)
+```
+
+The general statistics on the sleeping hours indicated that mean and median of the distribution are very close, thus data is close to be symmetric. Let's plot the sleeping hours distribution.
+
+```{r}
+ggplot(brfss_sleep,aes(x=sleptim1)) + 
+  geom_bar()
+```
+
+Indeed the distribution is nearly symmetric and unimodal. Next, we are interested to see the distribution of mental and physical health. First, we sum up the number of days with poor mental or physical health into a new variable "ment_phys_sum".
+
+```{r}
+brfss_sleep_poor_health = brfss_sleep %>% 
+  mutate(ment_phys_sum = physhlth+menthlth) %>% 
+  filter(!is.na(ment_phys_sum))
+
+summary(brfss_sleep_poor_health$ment_phys_sum)
+
+ggplot(brfss_sleep_poor_health,aes(x=ment_phys_sum)) + 
+  geom_bar() + 
+  xlab('Number of days with poor physical and mental health')
+```
+
+The distribution of the days with poor physical and mental health is right-skewed, ranging from 0 to `r max(brfss_sleep_poor_health$ment_phys_sum, na.rm = T)` days with average of ~8 days.
+
+To answer the research question No 1, we can look at the relationship between sleeping hours and average number of days with poor physical and mental health.
+
+```{r}
+sleep_ave_mental_phys = brfss_sleep_poor_health %>% 
+  group_by(sleep_hours = as.factor(sleptim1)) %>% 
+  summarise(avg_mental_phys_days = mean(ment_phys_sum), count=n()) 
+sleep_ave_mental_phys
+ggplot(sleep_ave_mental_phys, aes(x=sleep_hours, y = avg_mental_phys_days)) + 
+  geom_bar(stat='identity') + 
+  xlab('Number of sleeping hours')+
+  ylab("Days with poor physical and mental health")
+```
+
+As we can see from the plot, the number of days with poor physical and mental health increased if a person sleeps less or more than 7-8 hours. We have also an interesting observation that maximum days with poor physical and mental health occurs when person sleeps 23 hours a day. As this observation might be an outlier or dependent variable, we can't explain the impact of sleeping 23 hours.
+
+* * *
+
+**Research question 2:  In which US state(s) people have on average high body mass index (BMI) and drink large number of sugar-sweetened drinks?**
+
+First, we would like to filter out all missing data for BMI of individuals.
+
+```{r}
+filtered = brfss2013 %>% 
+  filter(!is.na(X_bmi5)) %>% 
+  mutate(X_state = tolower(X_state))
+```
+
+Such filtering resulted in 465,048 observations. Next, we would like to look into the data on number of sugar-sweetened drinks consumed per month. Let's check if there is a linear correlation between BMI and sugar-sweetened drink intake.
+
+```{r}
+filtered_drink = filtered %>% 
+  filter(ssbfrut2 > 300 | ssbfrut2 == 0) %>% 
+  mutate(ssbfrut2 = ifelse(ssbfrut2>0, (ssbfrut2- 300), ssbfrut2))
+plot(filtered_drink$X_bmi5, filtered_drink$ssbfrut2, xlab = "BMI", ylab = "Number of sugar-sweetened drink per month")
+```
+
+From the first look t the plot, we notice that there is no linear correlation between two variables (BMI and sugar-sweetened drink intake). 
+
+```{r}
+cor(filtered_drink$X_bmi5, filtered_drink$ssbfrut2)
+```
+
+We confirm this with Pearson correlation coefficient, which indicates correlation by 2.21%. However, there might be non-linear correlation between two variables, which can be measured by mutual information or other non-linear correlation parameters. This investigation is out-of-scope for the current research question.
+
+Next, we are interested to visualize the BMI data by state. We calculate the median BMI per state, as it is robust against the outliers. 
+```{r}
+filtered %>% 
+  group_by(X_state) %>% 
+  summarise(BMI_median = median(X_bmi5)) %>% 
+  ggplot(aes(map_id = X_state)) + 
+  # map points to the fifty_states shape data
+  geom_map(aes(fill = BMI_median), map = fifty_states) + 
+  expand_limits(x = fifty_states$long, y = fifty_states$lat) +
+  coord_map() +
+  scale_x_continuous(breaks = NULL) + 
+  scale_y_continuous(breaks = NULL) +
+  labs(x = "", y = "") +
+  theme(legend.position = "bottom", 
+        panel.background = element_blank())+ 
+  fifty_states_inset_boxes()
+```
+
+From the map above we see that several sates have high median BMI. Thus, we will make the according sorting of the table to define these states.
+
+```{r}
+filtered %>% 
+  group_by(X_state) %>% 
+  summarise(BMI_median = median(X_bmi5)) %>% 
+  arrange(desc(BMI_median)) %>% 
+  head(., n = 5)
+```
+
+The top 5 states with highest median BMI include Mississippi, West Virginia, Alabama, Kentucky and Louisiana. To finalize our interest of relationship between BMI and sugar-sweetened drink intake, we should check the states with the highest sugar-sweetened drink intake.
+
+```{r}
+filtered_drink %>% 
+  group_by(X_state) %>% 
+  summarise(drink_mean = mean(ssbfrut2)) %>% 
+  arrange(desc(drink_mean)) %>% 
+  head(., n = 5)
+```
+
+Among the top 5 states with highest on average sugar-sweetened drink intake, we encounter Alabama, West Virginia, Louisiana and Mississippi that we earlier categorized into the highest BMI states. These finding, gives us a hint that there might be a relation between large BMI and high number of sugar-sweetened drinks, also this relation is not-linear (as defined above by Pearson coefficient).
+
+* * *
+
+**Research question 3: Is the alcohol drinking habit is correlated with gender?**
+
+For this research question we have to establish the equal gender cohorts (males and females). First, we check what is the number of males and females with records of alcohol drinking.
+
+```{r}
+drink_brfss = brfss2013 %>% 
+  filter(!is.na(X_drnkmo4))
+
+table(drink_brfss$sex)
+```
+
+As we have less data on males then females, we randomly select the same number of entries for females.
+
+```{r}
+row_males = which(drink_brfss$sex == "Male")
+random_female_rows = sample(which(drink_brfss$sex == "Female"), length(row_males), replace=T)
+brfss_eq_f_m = drink_brfss[c(row_males, random_female_rows),]
+```
+
+```{r}
+boxplot(X_drnkmo4~sex, brfss_eq_f_m)
+```
+
+As the simple boxplots are not informative due to several extremely high values of drinks per month. We transform the y scale to log10.
+```{r}
+ggplot(brfss_eq_f_m, aes(y = X_drnkmo4, x = sex))+ 
+  geom_boxplot() +
+  scale_y_log10() 
+```
+
+As we can see from the plot that males have on average more drink per months then females. To state the conclusions in statistical terms, we will perform Welch Two Sample t-test to compute the difference in means of the two sample data.
+
+```{r}
+t.test(X_drnkmo4~sex, brfss_eq_f_m)
+```
+
+Based on the t-test results, the mean number of drinks per month consumed by males is 17.73 and the mean number of drinks per month consumed by females is 6.64. The results between the two groups are statistically significant (as indicated by p-value < 2.2e-16). Thus, we conclude that on average there is a correlation between sex and alcohol drinking habits.
+
+
