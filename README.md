@@ -8,7 +8,7 @@ This repo contains my completed assignments in R for Statistics courses.
 
 - Exploratory data analysis (https://htmlpreview.github.io/?https://github.com/androsova/statistics/blob/master/EDA_peer.html)
 
-- Final project ()
+- Final project (https://htmlpreview.github.io/?https://github.com/androsova/statistics/blob/master/Final_peer.html)
 
 #### Instructions
 
